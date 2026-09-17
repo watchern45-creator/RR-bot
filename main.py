@@ -1,6 +1,8 @@
 import os
 import logging
+import threading
 from typing import Optional
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -426,6 +428,25 @@ async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Broadcast done. Sent: {sent}, Failed: {failed}")
 
 
+# ---------------- KEEP-ALIVE WEB SERVER (for Render free tier) ----------------
+# Render's free "Web Service" tier requires listening on a port and stays
+# awake only while it receives HTTP traffic. This tiny Flask app gives the
+# cron-job pinger something to hit, so Render treats the service as a web
+# service and doesn't spin it down. The actual bot logic (polling Telegram)
+# runs in a separate background thread untouched by this.
+flask_app = Flask(__name__)
+
+
+@flask_app.route("/")
+def health_check():
+    return "Bot is running.", 200
+
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host="0.0.0.0", port=port)
+
+
 # ---------------- MAIN ----------------
 
 def main():
@@ -456,6 +477,11 @@ def main():
     ))
 
     logger.info("Bot started...")
+
+    # Start the keep-alive web server in a background thread so it doesn't
+    # block the bot's polling loop.
+    threading.Thread(target=run_flask, daemon=True).start()
+
     app.run_polling()
 
 
